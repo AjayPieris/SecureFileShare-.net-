@@ -1,0 +1,42 @@
+@{
+    ViewData["Title"] = "Upload File";
+}
+
+<div class="text-center mt-5">
+    <h2 class="display-4">Secure File Share</h2>
+    <p class="lead">Upload a file to get a secure download link.</p>
+</div>
+
+<div class="row justify-content-center mt-4">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <form asp-controller="Files" asp-action="Upload" method="post" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="file" class="form-label">Select File:</label>
+                        <input type="file" class="form-control" name="file" id="file" required />
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Upload Securely</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        @if (ViewBag.Message != null)
+        {
+            <div class="alert alert-success mt-4" role="alert">
+                <h4 class="alert-heading">@ViewBag.Message</h4>
+                @if (ViewBag.Link != null)
+                {
+                    <p>Your secure download code is:</p>
+                    <div class="bg-light p-2 border rounded text-center">
+                        <h5 class="mb-0 text-primary">@ViewBag.Link</h5>
+                    </div>
+                    <hr>
+                    <p class="mb-0 text-muted"><small>This file will expire in 24 hours.</small></p>
+                }
+            </div>
+        }
+    </div>
+</div>
