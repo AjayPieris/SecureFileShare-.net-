@@ -132,5 +132,32 @@ namespace SecureFileShare.Controllers
             // Send that list of files to the View
             return View(allFiles);
         }
+
+        // POST: This handles deleting a file from the server and database
+        [HttpPost("Files/Delete/{id}")]
+        public async Task<IActionResult> Delete(int id)
+        {
+            // 1. Find the file record in the database
+            var fileRecord = await _context.Files.FindAsync(id);
+            if (fileRecord == null)
+            {
+                return NotFound("Error: File not found.");
+            }
+
+            // 2. Find and delete the physical file securely
+            string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
+            string filePath = Path.Combine(uploadsFolder, fileRecord.SavedName);
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+            }
+
+            // 3. Delete the database record
+            _context.Files.Remove(fileRecord);
+            await _context.SaveChangesAsync();
+
+            // 4. Redirect back to the dashboard, refreshing the view
+            return RedirectToAction("Dashboard");
+        }
  }
 }
