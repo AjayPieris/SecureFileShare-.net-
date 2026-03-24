@@ -1,0 +1,58 @@
+@model IEnumerable<SecureFileShare.Models.FileRecord>
+
+@{
+    ViewData["Title"] = "Admin Dashboard";
+}
+
+<div class="container mt-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Uploaded Files Dashboard</h2>
+        <a href="/Files/Index" class="btn btn-outline-primary">Back to Upload</a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <table class="table table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th>ID</th>
+                        <th>Original Name</th>
+                        <th>Upload Time</th>
+                        <th>Expires On</th>
+                        <th>Secure Link</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var file in Model)
+                    {
+                        <tr>
+                            <td>@file.Id</td>
+                            <td>@file.OriginalName</td>
+                            <td>@file.UploadTime.ToString("g")</td>
+                            
+                            @if(file.ExpiryTime < DateTime.Now)
+                            {
+                                <td class="text-danger">Expired</td>
+                            }
+                            else
+                            {
+                                <td>@file.ExpiryTime.ToString("g")</td>
+                            }
+                            
+                            <td>
+                                <a href="/Files/Download/@file.DownloadLink" target="_blank">
+                                    @file.DownloadLink
+                                </a>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            
+            @if (!Model.Any())
+            {
+                <p class="text-center mt-3 text-muted">No files have been uploaded yet.</p>
+            }
+        </div>
+    </div>
+</div>

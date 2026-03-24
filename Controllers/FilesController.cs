@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using SecureFileShare.Data;
 using SecureFileShare.Models;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
 
 namespace SecureFileShare.Controllers
 {
@@ -76,5 +77,60 @@ namespace SecureFileShare.Controllers
 
             return View("Index");
         }
+        
+    // GET: This handles the secure download link
+        [HttpGet("Files/Download/{link}")]
+        public async Task<IActionResult> Download(string link)
+        {
+            // 1. Search the MySQL database for this specific link
+            var fileRecord = await _context.Files.FirstOrDefaultAsync(f => f.DownloadLink == link);
+
+            // 2. If the link doesn't exist in the database, stop here
+            if (fileRecord == null)
+            {
+                return Content("Error: File not found or link is invalid.");
+            }
+
+            // 3. Security Check: Has the file expired?
+            if (fileRecord.ExpiryTime < DateTime.Now)
+            {
+                return Content("Error: This download link has expired.");
+            }
+
+            // 4. Find where the actual file is saved on your computer
+            string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
+            string filePath = Path.Combine(uploadsFolder, fileRecord.SavedName);
+
+            // 5. Just in case the file was accidentally deleted from the folder
+            if (!System.IO.File.Exists(filePath))
+            {
+                return Content("Error: The file is missing from the server.");
+            }
+
+            // 6. Read the file into memory and send it to the user's browser to download
+            var memory = new MemoryStream();
+            using (var stream = new FileStream(filePath, FileMode.Open))
+            {
+                await stream.CopyToAsync(memory);
+            }
+            memory.Position = 0;
+
+            // This tells the browser to download the file using its original name
+            return File(memory, "application/octet-stream", fileRecord.OriginalName);
     }
+
+
+// GET: This loads the Dashboard page with all files
+        [HttpGet("Files/Dashboard")]
+        public async Task<IActionResult> Dashboard()
+        {
+            // Fetch all files from the database, ordering by the newest first
+            var allFiles = await _context.Files
+                                         .OrderByDescending(f => f.UploadTime)
+                                         .ToListAsync();
+
+            // Send that list of files to the View
+            return View(allFiles);
+        }
+ }
 }
