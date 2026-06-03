@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Net.Http;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -7,6 +9,8 @@ using SecureFileShare.Data;
 using SecureFileShare.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 
 namespace SecureFileShare.Controllers
 {
@@ -28,6 +32,16 @@ namespace SecureFileShare.Controllers
             return View();
         }
 
+        // Helper method to setup Cloudinary
+        private Cloudinary GetCloudinary()
+        {
+            var cloudName = Environment.GetEnvironmentVariable("CLOUDINARY_CLOUD_NAME");
+            var apiKey = Environment.GetEnvironmentVariable("CLOUDINARY_API_KEY");
+            var apiSecret = Environment.GetEnvironmentVariable("CLOUDINARY_API_SECRET");
+            var account = new Account(cloudName, apiKey, apiSecret);
+            return new Cloudinary(account) { Api = { Secure = true } };
+        }
+
         // POST: This actually handles the file when the user clicks "Upload"
         [HttpPost]
         public async Task<IActionResult> Upload(IFormFile file)
@@ -39,29 +53,36 @@ namespace SecureFileShare.Controllers
                 return View("Index");
             }
 
-            // 1. Create an "uploads" folder in our wwwroot (public) folder if it doesn't exist
-            string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
-            if (!Directory.Exists(uploadsFolder))
+            // 1. Setup Cloudinary
+            var cloudinary = GetCloudinary();
+            string publicId = Guid.NewGuid().ToString("N");
+
+            // 2. Upload file stream securely to Cloudinary
+            RawUploadResult uploadResult;
+            using (var stream = file.OpenReadStream())
             {
-                Directory.CreateDirectory(uploadsFolder);
+                var uploadParams = new RawUploadParams()
+                {
+                    File = new FileDescription(file.FileName, stream),
+                    PublicId = publicId
+                };
+                uploadResult = await cloudinary.UploadAsync(uploadParams);
             }
 
-            // 2. Generate a totally unique file name and a random download link
-            string uniqueFileName = Guid.NewGuid().ToString() + "_" + file.FileName;
-            string filePath = Path.Combine(uploadsFolder, uniqueFileName);
-            string downloadLink = Guid.NewGuid().ToString("N"); // Random string
-
-            // 3. Save the actual file to our computer/server
-            using (var fileStream = new FileStream(filePath, FileMode.Create))
+            if (uploadResult == null || uploadResult.Error != null)
             {
-                await file.CopyToAsync(fileStream);
+                ViewBag.Message = "Error uploading to cloud storage: " + uploadResult?.Error?.Message;
+                return View("Index");
             }
+
+            // 3. Make the generated Cloudinary URL the publicly shared link
+            string downloadLink = uploadResult.SecureUrl.ToString();
 
             // 4. Create the blueprint to save to the MySQL Database
             var fileRecord = new FileRecord
             {
                 OriginalName = file.FileName,
-                SavedName = uniqueFileName,
+                SavedName = $"{publicId}|{uploadResult.SecureUrl}", // Combine Public ID and Secure URL
                 DownloadLink = downloadLink,
                 UploadTime = DateTime.Now,
                 ExpiryTime = DateTime.Now.AddHours(24) // File expires in 24 hours!
@@ -72,7 +93,7 @@ namespace SecureFileShare.Controllers
             await _context.SaveChangesAsync();
 
             // 6. Send a success message back to the screen
-            ViewBag.Message = "File uploaded successfully!";
+            ViewBag.Message = "File securely stored in the cloud!";
             ViewBag.Link = downloadLink; // We will show this link to the user later
 
             return View("Index");
@@ -97,28 +118,55 @@ namespace SecureFileShare.Controllers
                 return Content("Error: This download link has expired.");
             }
 
-            // 4. Find where the actual file is saved on your computer
-            string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
-            string filePath = Path.Combine(uploadsFolder, fileRecord.SavedName);
-
-            // 5. Just in case the file was accidentally deleted from the folder
-            if (!System.IO.File.Exists(filePath))
+            // 4. Extract the Cloudinary Secure URL or fallback to older local files
+            var parts = fileRecord.SavedName.Split('|');
+            if (parts.Length == 1)
             {
-                return Content("Error: The file is missing from the server.");
+                // Old Local File Logic
+                string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
+                string filePath = Path.Combine(uploadsFolder, fileRecord.SavedName);
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    return Content("Error: The local file is missing from the server.");
+                }
+
+                var memoryLocal = new MemoryStream();
+                using (var stream = new FileStream(filePath, FileMode.Open))
+                {
+                    await stream.CopyToAsync(memoryLocal);
+                }
+                memoryLocal.Position = 0;
+
+                return File(memoryLocal, "application/octet-stream", fileRecord.OriginalName);
             }
 
-            // 6. Read the file into memory and send it to the user's browser to download
-            var memory = new MemoryStream();
-            using (var stream = new FileStream(filePath, FileMode.Open))
+            string secureUrl = parts[1];
+
+            // 5. Proxy the Cloudinary download so the user never sees the direct link
+            try
             {
-                await stream.CopyToAsync(memory);
+                using (var httpClient = new HttpClient())
+                {
+                    var response = await httpClient.GetAsync(secureUrl);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        return Content("Error: Unable to fetch the secure file from the cloud.");
+                    }
+                    
+                    var memory = new MemoryStream();
+                    await response.Content.CopyToAsync(memory);
+                    memory.Position = 0;
+
+                    // This tells the browser to download the file using its original name
+                    return File(memory, "application/octet-stream", fileRecord.OriginalName);
+                }
             }
-            memory.Position = 0;
-
-            // This tells the browser to download the file using its original name
-            return File(memory, "application/octet-stream", fileRecord.OriginalName);
-    }
-
+            catch (Exception ex)
+            {
+                return Content("Server error while retrieving the file: " + ex.Message);
+            }
+        }
 
 // GET: This loads the Dashboard page with all files
         [HttpGet("Files/Dashboard")]
@@ -144,12 +192,28 @@ namespace SecureFileShare.Controllers
                 return NotFound("Error: File not found.");
             }
 
-            // 2. Find and delete the physical file securely
-            string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
-            string filePath = Path.Combine(uploadsFolder, fileRecord.SavedName);
-            if (System.IO.File.Exists(filePath))
+            // 2. Delete the physical file from Cloudinary (or local system for older files)
+            var parts = fileRecord.SavedName.Split('|');
+            if (parts.Length == 1)
             {
-                System.IO.File.Delete(filePath);
+                string uploadsFolder = Path.Combine(_environment.WebRootPath, "uploads");
+                string filePath = Path.Combine(uploadsFolder, fileRecord.SavedName);
+                if (System.IO.File.Exists(filePath))
+                {
+                    System.IO.File.Delete(filePath);
+                }
+            }
+            else
+            {
+                string publicId = parts[0];
+                var cloudinary = GetCloudinary();
+                var delParams = new DelResParams()
+                {
+                    PublicIds = new List<string> { publicId },
+                    ResourceType = ResourceType.Raw // We used RawUploadParams, so we delete as Raw
+                };
+                
+                await cloudinary.DeleteResourcesAsync(delParams);
             }
 
             // 3. Delete the database record
