@@ -5,17 +5,18 @@ namespace SecureFileShare.Models
 {
     public class FileRecord
     {
-        [Key] // This tells the database that 'Id' is the primary key
+        [Key]
         public int Id { get; set; }
-        
+
         public string OriginalName { get; set; } = string.Empty;
-        
-        public string SavedName { get; set; } = string.Empty; // Name of the file on our server
-        
-        public string DownloadLink { get; set; } = string.Empty; // The random secure link
-        
+
+        // stores the cloudinary public id + url separated by a pipe character
+        public string SavedName { get; set; } = string.Empty;
+
+        public string DownloadLink { get; set; } = string.Empty;
+
         public DateTime UploadTime { get; set; } = DateTime.Now;
-        
+
         public DateTime ExpiryTime { get; set; }
     }
 }
